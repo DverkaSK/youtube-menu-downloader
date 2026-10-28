@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Menu Downloader
 // @namespace    https://github.com/DverkaSK/youtube-menu-downloader
-// @version      0.2.0
+// @version      0.3.0
 // @description  Пункт «Скачать» в меню «⋯» на YouTube, в Shorts и YouTube Music: MP4, WEBM, MP3, аудио, субтитры
 // @author       DverkaSK
 // @license      MIT
@@ -117,12 +117,31 @@
     return getPlayerResponse()?.videoDetails?.videoId || null;
   }
 
-  function videoInfo(videoId) {
-    const pr = getPlayerResponse(videoId);
+  // Данные о видео, которое сейчас не играет (карточка на главной, в канале и т.д.).
+  async function fetchPlayerResponse(videoId) {
+    try {
+      const context = JSON.parse(JSON.stringify(W.ytcfg?.get?.('INNERTUBE_CONTEXT') || null));
+      if (!context) return null;
+      const key = W.ytcfg.get('INNERTUBE_API_KEY');
+      const r = await fetch(`/youtubei/v1/player?prettyPrint=false${key ? `&key=${key}` : ''}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ context, videoId }),
+      });
+      return r.ok ? await r.json() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function videoInfo(videoId, titleHint, pr = getPlayerResponse(videoId)) {
     const tl = pr?.captions?.playerCaptionsTracklistRenderer;
+    const pageTitle = videoId === currentVideoId() && document.title.replace(/\s+-\s+YouTube( Music)?$/, '').trim();
     return {
       videoId,
-      title: pr?.videoDetails?.title || document.title.replace(/\s+-\s+YouTube( Music)?$/, '').trim() || videoId,
+      loaded: Boolean(pr),
+      title: pr?.videoDetails?.title || titleHint || pageTitle || videoId,
       tracks: (tl?.captionTracks || []).map((t) => ({
         baseUrl: t.baseUrl,
         lang: t.languageCode,
@@ -180,12 +199,11 @@
   // ---------------------------------------------------------------------------
   // Пункт «Скачать» в меню «⋯»
 
-  // Возвращает id видео, если клик пришёлся на кнопку «⋯» основного видео.
-  function menuTriggerVideoId(el) {
+  // Кнопка «⋯» основного (играющего) видео.
+  function playerMenuVideoId(el) {
     if (IS_MUSIC) {
       const menu = el.closest('ytmusic-menu-renderer');
-      if (!menu || !menu.closest('ytmusic-player-bar, ytmusic-player-page')) return null;
-      if (menu.closest('ytmusic-player-queue-item') || el.closest('#top-level-buttons')) return null;
+      if (!menu || !menu.closest('ytmusic-player-bar') || el.closest('#top-level-buttons')) return null;
       return currentVideoId();
     }
     if (location.pathname.startsWith('/shorts/')) {
@@ -198,6 +216,57 @@
       return currentVideoId();
     }
     return null;
+  }
+
+  // Меню у комментариев, шапки и т.п. — там «Скачать» не нужен, хотя ссылки на видео бывают.
+  const CARD_EXCLUDE = [
+    'ytd-comment-thread-renderer', 'ytd-comment-view-model', 'ytd-comment-renderer',
+    'ytd-masthead', '#masthead-container', 'ytd-guide-renderer', 'ytmusic-nav-bar', 'tp-yt-iron-dropdown',
+  ].join(', ');
+  // Карточки плейлистов и миксов: ссылка в них ведёт на первое видео, качать его неожиданно.
+  const PLAYLIST_CARD = [
+    'ytd-playlist-renderer', 'ytd-grid-playlist-renderer', 'ytd-compact-playlist-renderer',
+    'ytd-radio-renderer', 'ytd-compact-radio-renderer', 'yt-collection-thumbnail-view-model', 'yt-collections-stack',
+  ].join(', ');
+  const VIDEO_LINKS = 'a[href*="watch?v="], a[href*="/shorts/"]';
+
+  function videoIdFromHref(href) {
+    try {
+      const u = new URL(href, location.origin);
+      const shorts = u.pathname.match(/^\/shorts\/([\w-]{11})/);
+      if (shorts) return shorts[1];
+      if (u.pathname === '/watch') return u.searchParams.get('v');
+    } catch {}
+    return null;
+  }
+
+  function cardTitle(card, links) {
+    const t = card.querySelector('#video-title, #video-title-link, h3, .title');
+    const text = t?.getAttribute('title') || t?.textContent?.trim();
+    return text || [...links].map((a) => a.getAttribute('title') || a.getAttribute('aria-label')).find(Boolean) || '';
+  }
+
+  // Кнопка «⋯» на карточке видео где угодно: главная, канал, поиск, рекомендации,
+  // плейлисты, полки Shorts, списки YouTube Music. Поднимаемся от кнопки до первого
+  // предка со ссылками на видео; если ссылки ведут на разные видео — это уже не карточка.
+  function cardMenuTarget(el) {
+    if (!el.closest('button, [role="button"], yt-icon-button, ytd-menu-renderer, ytmusic-menu-renderer')) return null;
+    if (el.closest('a[href]') || el.closest(CARD_EXCLUDE)) return null;
+    let node = el.parentElement;
+    for (let depth = 0; node && node !== document.body && depth < 15; depth++, node = node.parentElement) {
+      const links = node.querySelectorAll(VIDEO_LINKS);
+      if (!links.length) continue;
+      const ids = new Set([...links].map((a) => videoIdFromHref(a.getAttribute('href'))).filter(Boolean));
+      if (ids.size !== 1 || node.matches(PLAYLIST_CARD) || node.querySelector(PLAYLIST_CARD)) return null;
+      return { videoId: [...ids][0], title: cardTitle(node, links) };
+    }
+    return null;
+  }
+
+  // Возвращает { videoId, title }, если клик пришёлся на кнопку «⋯» видео.
+  function menuTarget(el) {
+    const videoId = playerMenuVideoId(el);
+    return videoId ? { videoId, title: '' } : cardMenuTarget(el);
   }
 
   // Сами пункты меню: новый (view-model) и старый (Polymer) варианты, плюс YouTube Music.
@@ -265,7 +334,7 @@
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
   }
 
-  function injectMenuItem({ dropdown, parent, ref }, videoId) {
+  function injectMenuItem({ dropdown, parent, ref }, target) {
     removeMenuItems();
     const item = h('div', {
       class: 'ytdm-item',
@@ -275,7 +344,7 @@
         e.preventDefault();
         e.stopPropagation();
         closeMenu(dropdown);
-        openDialog(videoId);
+        openDialog(target);
       },
       onkeydown: (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -294,13 +363,13 @@
 
   // Меню рендерится асинхронно после клика, поэтому недолго ждём его появления.
   let menuWait = 0;
-  function waitForMenu(videoId) {
+  function waitForMenu(target) {
     const token = ++menuWait;
     const started = Date.now();
     const tick = () => {
       if (token !== menuWait) return;
       const menu = findOpenMenu();
-      if (menu) return injectMenuItem(menu, videoId);
+      if (menu) return injectMenuItem(menu, target);
       if (Date.now() - started < 2000) setTimeout(tick, 40);
     };
     setTimeout(tick, 30);
@@ -310,8 +379,8 @@
     const el = e.composedPath?.()[0] ?? e.target;
     if (!(el instanceof Element) || el.closest('.ytdm-item, .ytdm-overlay')) return;
     removeMenuItems();
-    const videoId = menuTriggerVideoId(el);
-    if (videoId) waitForMenu(videoId);
+    const target = menuTarget(el);
+    if (target) waitForMenu(target);
     else menuWait++;
   }, true);
 
@@ -460,7 +529,7 @@
     if (!text.trim()) {
       throw new Error(captured
         ? 'YouTube вернул пустые субтитры. Обновите страницу и попробуйте снова'
-        : 'YouTube не отдаёт субтитры без токена плеера. Включите субтитры (CC) в плеере на пару секунд и нажмите «Скачать» ещё раз');
+        : 'YouTube не отдаёт субтитры без токена плеера. Откройте это видео, включите субтитры (CC) на пару секунд и нажмите «Скачать» ещё раз');
     }
     const cues = json3ToCues(JSON.parse(text));
     const fmt = settings.subFormat;
@@ -511,9 +580,10 @@
     h('select', { class: 'ytdm-select', value, onchange: (e) => onchange(e.target.value) },
       options.map(([v, label]) => h('option', { value: v }, label)));
 
-  function openDialog(videoId, view = 'main') {
+  // target: { videoId, title } или null, если видео не найдено.
+  function openDialog(target, view = 'main') {
     closeDialog();
-    const info = videoId ? videoInfo(videoId) : null;
+    const info = target?.videoId ? videoInfo(target.videoId, target.title) : null;
     const formatKey = IS_MUSIC ? 'lastFormatMusic' : 'lastFormat';
     const state = { view: info ? view : 'settings', format: settings[formatKey], track: 0, tlang: '' };
 
@@ -694,10 +764,24 @@
     document.body.append(overlay);
     (dialog.querySelector('.ytdm-btn-primary') || dialog).focus();
     if (!info) setStatus('Откройте страницу с видео, чтобы скачать его');
+
+    // Видео не играет — название и субтитры подгружаем отдельно.
+    if (info && !info.loaded) {
+      const opened = overlay;
+      fetchPlayerResponse(info.videoId).then((pr) => {
+        if (!pr?.videoDetails || overlay !== opened) return;
+        Object.assign(info, videoInfo(info.videoId, info.title, pr));
+        render();
+      });
+    }
   }
 
-  GM_registerMenuCommand('Скачать текущее видео', () => openDialog(currentVideoId()));
-  GM_registerMenuCommand('Настройки', () => openDialog(currentVideoId(), 'settings'));
+  const currentTarget = () => {
+    const videoId = currentVideoId();
+    return videoId ? { videoId, title: '' } : null;
+  };
+  GM_registerMenuCommand('Скачать текущее видео', () => openDialog(currentTarget()));
+  GM_registerMenuCommand('Настройки', () => openDialog(currentTarget(), 'settings'));
 
   // ---------------------------------------------------------------------------
   // Стили
