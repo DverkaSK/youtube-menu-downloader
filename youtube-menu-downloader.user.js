@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         YouTube Menu Downloader
 // @namespace    https://github.com/DverkaSK/youtube-menu-downloader
-// @version      0.3.0
-// @description  Пункт «Скачать» в меню «⋯» на YouTube, в Shorts и YouTube Music: MP4, WEBM, MP3, аудио, субтитры
+// @version      0.3.1
+// @description  Пункт "Скачать" в меню "..." на YouTube, в Shorts и YouTube Music: MP4, WEBM, MP3, аудио, субтитры
 // @author       DverkaSK
 // @license      MIT
 // @homepageURL  https://github.com/DverkaSK/youtube-menu-downloader
@@ -173,6 +173,10 @@
     return el;
   }
 
+  const closeIcon = () =>
+    h('svg', { viewBox: '0 0 24 24', class: 'ytdm-icon', 'aria-hidden': 'true' },
+      h('path', { d: 'm12.7 12 6.65-6.65-.7-.7L12 11.3 5.35 4.65l-.7.7L11.3 12l-6.65 6.65.7.7L12 12.7l6.65 6.65.7-.7L12.7 12z' }));
+
   const downloadIcon = () =>
     h('svg', { viewBox: '0 0 24 24', class: 'ytdm-icon', 'aria-hidden': 'true' },
       h('path', { d: 'M17 18v1H6v-1h11zm-.5-6.6-.7-.7-3.3 3.3V4h-1v10l-3.3-3.3-.7.7 4.5 4.5 4.5-4.5z' }));
@@ -197,9 +201,9 @@
     s.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 150) || 'video';
 
   // ---------------------------------------------------------------------------
-  // Пункт «Скачать» в меню «⋯»
+  // Пункт "Скачать" в меню "..."
 
-  // Кнопка «⋯» основного (играющего) видео.
+  // Кнопка "..." основного (играющего) видео.
   function playerMenuVideoId(el) {
     if (IS_MUSIC) {
       const menu = el.closest('ytmusic-menu-renderer');
@@ -218,7 +222,7 @@
     return null;
   }
 
-  // Меню у комментариев, шапки и т.п. — там «Скачать» не нужен, хотя ссылки на видео бывают.
+  // Меню у комментариев, шапки и т.п.: там "Скачать" не нужен, хотя ссылки на видео бывают.
   const CARD_EXCLUDE = [
     'ytd-comment-thread-renderer', 'ytd-comment-view-model', 'ytd-comment-renderer',
     'ytd-masthead', '#masthead-container', 'ytd-guide-renderer', 'ytmusic-nav-bar', 'tp-yt-iron-dropdown',
@@ -246,9 +250,9 @@
     return text || [...links].map((a) => a.getAttribute('title') || a.getAttribute('aria-label')).find(Boolean) || '';
   }
 
-  // Кнопка «⋯» на карточке видео где угодно: главная, канал, поиск, рекомендации,
+  // Кнопка "..." на карточке видео где угодно: главная, канал, поиск, рекомендации,
   // плейлисты, полки Shorts, списки YouTube Music. Поднимаемся от кнопки до первого
-  // предка со ссылками на видео; если ссылки ведут на разные видео — это уже не карточка.
+  // предка со ссылками на видео; если ссылки ведут на разные видео, это уже не карточка.
   function cardMenuTarget(el) {
     if (!el.closest('button, [role="button"], yt-icon-button, ytd-menu-renderer, ytmusic-menu-renderer')) return null;
     if (el.closest('a[href]') || el.closest(CARD_EXCLUDE)) return null;
@@ -263,7 +267,7 @@
     return null;
   }
 
-  // Возвращает { videoId, title }, если клик пришёлся на кнопку «⋯» видео.
+  // Возвращает { videoId, title }, если клик пришёлся на кнопку "..." видео.
   function menuTarget(el) {
     const videoId = playerMenuVideoId(el);
     return videoId ? { videoId, title: '' } : cardMenuTarget(el);
@@ -280,7 +284,7 @@
     '[role="menuitem"]:not(.ytdm-item)',
   ].join(', ');
 
-  // Контейнеры списка — на случай, если пункты ещё не отрисованы.
+  // Контейнеры списка, на случай если пункты ещё не отрисованы.
   const MENU_LIST_SELECTORS = [
     'yt-list-view-model',
     'ytd-menu-popup-renderer #items',
@@ -389,7 +393,7 @@
 
   // Публичные инстансы без ключа. Они бывают перегружены, поэтому идут после своего.
   const PUBLIC_COBALT_APIS = ['https://cobalt-api.kwiatekmiki.com/'];
-  // Веб-версия cobalt — запасной вариант, ссылка передаётся через #.
+  // Веб-версия cobalt как запасной вариант, ссылка передаётся через #.
   const FALLBACK_SITE = (url) => `https://cobalt.meowing.de/#${url}`;
 
   const normalizeApi = (url) => url.trim().replace(/\/+$/, '') + '/';
@@ -458,7 +462,7 @@
     const url = json.url || json.picker?.[0]?.url;
     if (!url) throw new Error(`неожиданный ответ: ${json.status}`);
     // tunnel отдаётся с Content-Disposition: attachment, поэтому страница не уходит,
-    // а просто начинается загрузка. redirect ведёт на сам поток — его во вкладку.
+    // а просто начинается загрузка. redirect ведёт на сам поток, его открываем во вкладке.
     if (json.status === 'tunnel') clickLink(url);
     else GM_openInTab(url, { active: true });
     return url;
@@ -492,12 +496,12 @@
     const cues = [];
     for (const ev of json.events || []) {
       if (!ev.segs) continue;
-      const text = ev.segs.map((s) => s.utf8 || '').join('').replace(/​/g, '').trim();
+      const text = ev.segs.map((s) => s.utf8 || '').join('').replace(/\u200b/g, '').trim();
       if (!text) continue;
       const start = ev.tStartMs || 0;
       cues.push({ start, end: start + (ev.dDurationMs || 2000), text });
     }
-    // Автосубтитры идут «окном» из двух строк, обрезаем наложения.
+    // Автосубтитры идут "окном" из двух строк, обрезаем наложения.
     for (let i = 0; i < cues.length - 1; i++) {
       if (cues[i].end > cues[i + 1].start) cues[i].end = Math.max(cues[i + 1].start, cues[i].start + 1);
     }
@@ -529,7 +533,7 @@
     if (!text.trim()) {
       throw new Error(captured
         ? 'YouTube вернул пустые субтитры. Обновите страницу и попробуйте снова'
-        : 'YouTube не отдаёт субтитры без токена плеера. Откройте это видео, включите субтитры (CC) на пару секунд и нажмите «Скачать» ещё раз');
+        : 'YouTube не отдаёт субтитры без токена плеера. Откройте это видео, включите субтитры (CC) на пару секунд и нажмите "Скачать" ещё раз');
     }
     const cues = json3ToCues(JSON.parse(text));
     const fmt = settings.subFormat;
@@ -596,7 +600,7 @@
     }
 
     function renderOptions() {
-      const noCobalt = !cobaltInstances().length && hint('Серверы cobalt отключены в настройках — откроется веб-версия cobalt.');
+      const noCobalt = !cobaltInstances().length && hint('Серверы cobalt отключены в настройках, откроется веб-версия cobalt.');
       switch (state.format) {
         case 'mp4':
         case 'webm': {
@@ -634,7 +638,7 @@
             )),
             field('Формат', select(SUB_FORMATS.map((f) => [f, f.toUpperCase()]), settings.subFormat,
               (v) => { settings.subFormat = v; saveSettings(); })),
-            !timedtextUrls.has(info.videoId) && hint('Если скачать не получится — включите субтитры (CC) в плеере и повторите.'),
+            !timedtextUrls.has(info.videoId) && hint('Если скачать не получится, включите субтитры (CC) в плеере и повторите.'),
           ];
       }
       return [];
@@ -643,7 +647,7 @@
     function renderMain() {
       const download = button('Скачать', 'primary', async () => {
         download.disabled = true;
-        setStatus('Готовлю…');
+        setStatus('Готовлю...');
         try {
           if (state.format === 'subs') {
             await downloadSubs(info, state.track, state.tlang);
@@ -651,7 +655,7 @@
           } else {
             const { url, fallback, errors } = await downloadViaCobalt(info, state.format);
             if (url) {
-              setStatus(['Загрузка началась. Если нет — ', h('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, 'откройте ссылку')], 'ok');
+              setStatus(['Загрузка началась. Если нет, ', h('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, 'откройте ссылку')], 'ok');
             } else {
               setStatus([
                 'Серверы cobalt не ответили, открыл ',
@@ -717,7 +721,7 @@
             apply();
             const bases = cobaltInstances();
             if (!bases.length) return setStatus('Нет серверов для проверки', 'error');
-            setStatus('Проверяю…');
+            setStatus('Проверяю...');
             const results = await Promise.all(bases.map(async (base) => {
               const host = new URL(base).host;
               try {
@@ -749,7 +753,7 @@
     const dialog = h('div', { class: 'ytdm-dialog', role: 'dialog', 'aria-modal': 'true' },
       h('div', { class: 'ytdm-header' },
         h('div', { class: 'ytdm-heading' }),
-        h('button', { type: 'button', class: 'ytdm-close', 'aria-label': 'Закрыть', onclick: closeDialog }, '✕')),
+        h('button', { type: 'button', class: 'ytdm-close', 'aria-label': 'Закрыть', onclick: closeDialog }, closeIcon())),
       body);
 
     overlay = h('div', { class: 'ytdm-overlay', onclick: (e) => { if (e.target === overlay) closeDialog(); } }, dialog);
@@ -765,7 +769,7 @@
     (dialog.querySelector('.ytdm-btn-primary') || dialog).focus();
     if (!info) setStatus('Откройте страницу с видео, чтобы скачать его');
 
-    // Видео не играет — название и субтитры подгружаем отдельно.
+    // Видео не играет, поэтому название и субтитры подгружаем отдельно.
     if (info && !info.loaded) {
       const opened = overlay;
       fetchPlayerResponse(info.videoId).then((pr) => {
